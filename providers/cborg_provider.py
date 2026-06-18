@@ -2,8 +2,6 @@ import urllib.request
 import json
 
 
-
-
 class CBorgProvider:
     """OpenAI-compatible provider for CBorg. Reference implementation of the
     LLMProvider protocol (see base.py). All calls go through an OpenAI-style
@@ -16,16 +14,18 @@ class CBorgProvider:
         self.base_url = base_url
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self._PRICING = {
-                "gpt-5.1":               (1.25, 10.00),
-                "gpt-5.4-pro":           (2.50, 15.00),
-                "claude-sonnet-4-6":     (3.00, 15.00),
-                "claude-sonnet-high":    (3.00, 15.00),
-                "claude-opus-4-6":       (5.00, 25.00),
-                "claude-haiku-4-5":      (1.00,  5.00),
-                "gemini-2.0-flash":      (0.10,  0.40),
-                "gemini-2.5-flash":      (0.30,  2.50),
-                "gemini-3.1-flash-lite": (0.25,  1.50),
-            }
+            "gpt-5.1":               (1.25, 10.00),
+            "gpt-5.4-pro":           (2.50, 15.00),
+            "claude-sonnet-4-6":     (3.00, 15.00),
+            "claude-sonnet-high":    (3.00, 15.00),
+            "claude-opus-4-6":       (5.00, 25.00),
+            "claude-haiku-4-5":      (1.00,  5.00),
+            "gemini-2.0-flash":      (0.10,  0.40),
+            "gemini-2.5-flash":      (0.30,  2.50),
+            "gemini-3.1-flash-lite": (0.25,  1.50),
+            # input only; no output tokens
+            "cohere-embed-v4":       (0.12,  0.00),
+        }
 
     # ── Embedding ──────────────────────────────────────────────────────
     def embed_texts(

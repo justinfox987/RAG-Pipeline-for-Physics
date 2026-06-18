@@ -11,12 +11,14 @@ from session_store import (
 
 # ── LaTeX ──────────────────────────────────────────────────────────────────────
 
+
 def _render_latex(text: str) -> str:
     text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', text, flags=re.DOTALL)
     text = re.sub(r'\\\((.*?)\\\)', r'$\1$',   text, flags=re.DOTALL)
     return text
 
 # ── Meta helpers ───────────────────────────────────────────────────────────────
+
 
 def _build_meta(result, cborg) -> dict:
     """Build a JSON-serializable metadata dict from a QueryResult + CBorgBudget."""
@@ -59,9 +61,10 @@ def _render_meta(meta: dict):
         if pages:
             multi = len({p["topic"] for p in pages}) > 1
             for p in pages:
-                tag  = f"[{p['topic']}] " if multi else ""
+                tag = f"[{p['topic']}] " if multi else ""
                 flag = " *(raw)*" if not p.get("clean", True) else ""
-                st.write(f"- {tag}**{p['source']}** — p.{p['page_num']}  (score: {p['score']:.4f}){flag}")
+                st.write(
+                    f"- {tag}**{p['source']}** — p.{p['page_num']}  (score: {p['score']:.4f}){flag}")
 
         col1, col2, col3 = st.columns(3)
         col1.metric("Tokens in",  f"{meta['in_tok']:,}")
@@ -86,12 +89,14 @@ def _render_meta(meta: dict):
 
 # ── Page config ────────────────────────────────────────────────────────────────
 
+
 st.set_page_config(page_title="Research Assistant", layout="wide")
 
 # ── Session bootstrap ─────────────────────────────────────────────────────────
 
+
 def _ensure_session():
-    sid  = st.session_state.get("current_session_id")
+    sid = st.session_state.get("current_session_id")
     sess = st.session_state.get("current_session")
 
     if sid is None:
@@ -101,7 +106,7 @@ def _ensure_session():
         else:
             new = create_session()
             st.session_state.current_session_id = new["id"]
-            st.session_state.current_session    = new
+            st.session_state.current_session = new
             return
 
     if sess is None or sess.get("id") != sid:
@@ -110,7 +115,7 @@ def _ensure_session():
             loaded = create_session()
             sid = loaded["id"]
         st.session_state.current_session_id = sid
-        st.session_state.current_session    = loaded
+        st.session_state.current_session = loaded
 
 
 _ensure_session()
@@ -122,7 +127,7 @@ with st.sidebar:
     if st.button("＋  New Chat", use_container_width=True, type="primary"):
         new = create_session()
         st.session_state.current_session_id = new["id"]
-        st.session_state.current_session    = new
+        st.session_state.current_session = new
         st.rerun()
 
     st.divider()
@@ -136,7 +141,7 @@ with st.sidebar:
         col_t, col_x = st.columns([5, 1])
         if col_t.button(label, key=f"sess_{s['id']}", use_container_width=True):
             st.session_state.current_session_id = s["id"]
-            st.session_state.current_session    = load_session(s["id"])
+            st.session_state.current_session = load_session(s["id"])
             st.rerun()
         if col_x.button("✕", key=f"del_{s['id']}"):
             delete_session(s["id"])
@@ -144,20 +149,23 @@ with st.sidebar:
                 remaining = [x for x in list_sessions()]
                 if remaining:
                     st.session_state.current_session_id = remaining[0]["id"]
-                    st.session_state.current_session    = load_session(remaining[0]["id"])
+                    st.session_state.current_session = load_session(
+                        remaining[0]["id"])
                 else:
                     new = create_session()
                     st.session_state.current_session_id = new["id"]
-                    st.session_state.current_session    = new
+                    st.session_state.current_session = new
             st.rerun()
 
     st.divider()
 
     st.caption("Query Settings")
     all_topics = get_all_topics()
-    topics = st.multiselect("Topics", all_topics, default=all_topics, key="topics")
-    model  = st.text_input("Model",  value=DEFAULT_MODEL, key="model_input")
-    top_k  = st.number_input("Top-K", min_value=1, max_value=20, value=DEFAULT_TOP_K, key="top_k_input")
+    topics = st.multiselect("Topics", all_topics,
+                            default=all_topics, key="topics")
+    model = st.text_input("Model",  value=DEFAULT_MODEL, key="model_input")
+    top_k = st.number_input(
+        "Top-K", min_value=1, max_value=20, value=DEFAULT_TOP_K, key="top_k_input")
 
 # ── Chat area ─────────────────────────────────────────────────────────────────
 
@@ -173,8 +181,8 @@ for msg in session["messages"]:
 
 if question := st.chat_input("Ask a research question…"):
     cur_topics = st.session_state.get("topics") or None
-    cur_model  = st.session_state.get("model_input",  DEFAULT_MODEL)
-    cur_top_k  = int(st.session_state.get("top_k_input", DEFAULT_TOP_K))
+    cur_model = st.session_state.get("model_input",  DEFAULT_MODEL)
+    cur_top_k = int(st.session_state.get("top_k_input", DEFAULT_TOP_K))
 
     # Show and save user message
     with st.chat_message("user"):
@@ -193,7 +201,8 @@ if question := st.chat_input("Ask a research question…"):
                 result = run_query(question, cur_topics, cur_model, cur_top_k)
         except (ValueError, SystemExit) as e:
             st.error(str(e))
-            session["messages"].append({"role": "assistant", "content": f"⚠ {e}", "meta": None})
+            session["messages"].append(
+                {"role": "assistant", "content": f"⚠ {e}", "meta": None})
         else:
             cborg = fetch_cborg_budget(result.monthly_budget, wait=False)
             st.markdown(_render_latex(result.response_text))

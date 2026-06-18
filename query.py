@@ -7,7 +7,6 @@ Usage:
     python query.py "<question>" --top-k 8
     python query.py "<question>" --topic heisenberg dmi
 """
-import os
 import sys
 import json
 import base64
@@ -21,35 +20,21 @@ import faiss
 import fitz
 from providers import get_provider
 
-# ── Configuration ──────────────────────────────────────────────────────────────
+from config import (
+    SCRIPT_DIR, PAPERS_DIR, INDEXES_DIR, BUDGET_FILE,
+    DEFAULT_MODEL, DEFAULT_TOP_K, ROUTING_MODEL,
+    EMBEDDING_MODEL, EMBEDDING_DIM,
+    UPGRADE_MATH_THRESHOLD, UPGRADE_MIN_SCORE, MAX_UPGRADES_PER_QUERY,
+)
 
-DEFAULT_MODEL   = "gemma-4"
-DEFAULT_TOP_K   = 5
-ROUTING_MODEL   = "cborg-mini-fast"   # fast/cheap model used only for query classification
-EMBEDDING_MODEL = "cohere-embed-v4"
-EMBEDDING_DIM   = 1024
-
-
-SCRIPT_DIR  = Path(__file__).resolve().parent
-INDEXES_DIR = SCRIPT_DIR / "indexes"
-PAPERS_DIR  = SCRIPT_DIR / "papers"
-BUDGET_FILE = SCRIPT_DIR / "budget.json"
 
 def load_topic_metadata(topic: str) -> dict:
     p = INDEXES_DIR / topic / "metadata.json"
     with open(p, "r", encoding="utf-8", errors="replace") as f:
         return json.load(f)
 
-CBORG_API_KEY = os.environ.get("CBORG_API_KEY")
-if not CBORG_API_KEY:
-    raise SystemExit("CBORG_API_KEY env var is not set.")
 
 provider = get_provider()
-
-# Lazy upgrade controls
-UPGRADE_MATH_THRESHOLD = 5    # min math_score to bother upgrading a raw page
-UPGRADE_MIN_SCORE      = 0.50 # min retrieval score to qualify for upgrade
-MAX_UPGRADES_PER_QUERY = 2    # cap concurrent vision calls per query
 
 
 TRANSCRIPTION_PROMPT = """You are indexing a physics/mathematics textbook or paper page for semantic search.
@@ -78,7 +63,7 @@ def record_spend(cost: float):
     current_month = datetime.now().strftime("%Y-%m")
     if data["month"] != current_month:
         data = {"month": current_month, "spent": 0.0, "queries": 0}
-    data["spent"]   += cost
+    data["spent"] += cost
     data["queries"] += 1
     with open(BUDGET_FILE, "w") as f:
         json.dump(data, f, indent=2)
@@ -86,11 +71,13 @@ def record_spend(cost: float):
 
 # ── Embedding ──────────────────────────────────────────────────────────────────
 
+
 def embed_query(query: str, embedding_model: str) -> np.ndarray:
     embeddings, _ = provider.embed_texts([query], embedding_model)
     vec = np.array(embeddings, dtype=np.float32)
     faiss.normalize_L2(vec)
     return vec
+
 
 def embed_texts(texts: list[str]) -> np.ndarray:
     embeddings, _ = provider.embed_texts(texts, EMBEDDING_MODEL)
@@ -100,8 +87,10 @@ def embed_texts(texts: list[str]) -> np.ndarray:
 
 # ── Lazy vision upgrade ────────────────────────────────────────────────────────
 
+
 def is_base_topic(topic: str) -> bool:
     return (INDEXES_DIR / topic / "base_manifest.json").exists()
+
 
 def transcribe_page(pdf_path, page_num, *, vision_model, page_dpi):
     doc = fitz.open(str(pdf_path))
@@ -117,11 +106,12 @@ def transcribe_page(pdf_path, page_num, *, vision_model, page_dpi):
     )
     return text
 
+
 def persist_upgrades(topic: str, updates: list[tuple[int, str]]):
     """Batch-update descriptions + vectors for upgraded pages in one FAISS rebuild."""
-    index_dir  = INDEXES_DIR / topic
+    index_dir = INDEXES_DIR / topic
     index_path = index_dir / "index.faiss"
-    meta_path  = index_dir / "metadata.json"
+    meta_path = index_dir / "metadata.json"
 
     index = faiss.read_index(str(index_path))
     with open(meta_path, "r", encoding="utf-8") as f:
@@ -132,7 +122,7 @@ def persist_upgrades(topic: str, updates: list[tuple[int, str]]):
 
     for (page_idx, new_desc), vec in zip(updates, new_vecs):
         metadata["pages"][page_idx]["description"] = new_desc
-        metadata["pages"][page_idx]["clean"]       = True
+        metadata["pages"][page_idx]["clean"] = True
         all_vecs[page_idx] = vec
 
     new_index = faiss.IndexFlatIP(EMBEDDING_DIM)
@@ -140,6 +130,7 @@ def persist_upgrades(topic: str, updates: list[tuple[int, str]]):
     faiss.write_index(new_index, str(index_path))
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
+
 
 def upgrade_raw_math_pages(pages: list[dict]) -> int:
     """
@@ -151,7 +142,7 @@ def upgrade_raw_math_pages(pages: list[dict]) -> int:
         if not p.get("clean", True)
         and not is_base_topic(p["topic"])
         and p.get("math_score", 0) >= UPGRADE_MATH_THRESHOLD
-        and p.get("score", 0.0)    >= UPGRADE_MIN_SCORE
+        and p.get("score", 0.0) >= UPGRADE_MIN_SCORE
     ]
 
     candidates.sort(key=lambda p: p["score"], reverse=True)
@@ -165,7 +156,8 @@ def upgrade_raw_math_pages(pages: list[dict]) -> int:
     for t in topics_needed:
         mp = INDEXES_DIR / t / "metadata.json"
         if not mp.exists():
-            raise SystemExit(f"Missing metadata.json for topic '{t}' (needed for upgrades).")
+            raise SystemExit(
+                f"Missing metadata.json for topic '{t}' (needed for upgrades).")
         with open(mp, "r", encoding="utf-8", errors="replace") as f:
             metadata_by_topic[t] = json.load(f)
 
@@ -198,7 +190,8 @@ def upgrade_raw_math_pages(pages: list[dict]) -> int:
                 return None
             return page, desc
         except Exception as e:
-            print(f"  ! upgrade failed for p.{page['page_num']}: {str(e)[:80]}")
+            print(
+                f"  ! upgrade failed for p.{page['page_num']}: {str(e)[:80]}")
             return None
 
     print(f"  upgrading {len(candidates)} raw page(s) in parallel...")
@@ -212,7 +205,7 @@ def upgrade_raw_math_pages(pages: list[dict]) -> int:
                 continue
             page, desc = result
             page["description"] = desc
-            page["clean"]       = True
+            page["clean"] = True
             pending.setdefault(page["topic"], []).append((page["_idx"], desc))
             print(f"    ✓ upgraded {page['source']} p.{page['page_num']}")
 
@@ -222,11 +215,13 @@ def upgrade_raw_math_pages(pages: list[dict]) -> int:
             persist_upgrades(topic, updates)
             upgraded += len(updates)
         except Exception as e:
-            print(f"  ! failed to persist upgrades for '{topic}': {str(e)[:80]}")
+            print(
+                f"  ! failed to persist upgrades for '{topic}': {str(e)[:80]}")
 
     return upgraded
 
 # ── Retrieval ──────────────────────────────────────────────────────────────────
+
 
 def get_all_topics() -> list[str]:
     if not INDEXES_DIR.exists():
@@ -236,7 +231,9 @@ def get_all_topics() -> list[str]:
         if p.is_dir() and (p / "index.faiss").exists()
     )
 
-def retrieve_pages(topics: list[str], query: str, top_k: int) -> list[dict]:
+
+def retrieve_pages(topics: list[str], query: str, top_k: int,
+                   query_vec: np.ndarray | None = None) -> list[dict]:
     all_pages: list[dict] = []
 
     # Load metadata for each selected topic (so we can derive embedding model/dim)
@@ -262,20 +259,25 @@ def retrieve_pages(topics: list[str], query: str, top_k: int) -> list[dict]:
         return []
 
     if len(embedding_models) > 1:
-        raise SystemExit(f"Embedding model mismatch across selected topics: {embedding_models}")
+        raise SystemExit(
+            f"Embedding model mismatch across selected topics: {embedding_models}")
     if len(embedding_dims) > 1:
-        raise SystemExit(f"Embedding dim mismatch across selected topics: {embedding_dims}")
+        raise SystemExit(
+            f"Embedding dim mismatch across selected topics: {embedding_dims}")
 
     if len(embedding_models) != 1:
-        raise SystemExit("No embedding_model found in metadata for the selected topics.")
+        raise SystemExit(
+            "No embedding_model found in metadata for the selected topics.")
     if len(embedding_dims) != 1:
-        raise SystemExit("No embedding_dim found in metadata for the selected topics.")
+        raise SystemExit(
+            "No embedding_dim found in metadata for the selected topics.")
 
     effective_embedding_model = next(iter(embedding_models))
     effective_embedding_dim = next(iter(embedding_dims))
 
-    # Embed query once using the shared effective embedding model
-    query_vec = embed_query(query, effective_embedding_model)
+    # Embed query once using the shared effective embedding model (skip if pre-computed)
+    if query_vec is None:
+        query_vec = embed_query(query, effective_embedding_model)
 
     for topic in topics:
         if topic not in metadata_by_topic:
@@ -330,6 +332,7 @@ def retrieve_pages(topics: list[str], query: str, top_k: int) -> list[dict]:
 
 # ── Reasoning ─────────────────────────────────────────────────────────────────
 
+
 SYSTEM_PROMPT = """You are a theoretical physics research assistant with deep expertise in condensed matter physics, quantum mechanics, and mathematical physics.
 
 You will receive a research question and relevant pages from a personal research library, provided as transcribed text with LaTeX math.
@@ -343,10 +346,12 @@ Guidelines:
 
 DIRECT_SYSTEM_PROMPT = """You are a helpful physics research assistant. Respond conversationally and concisely."""
 
-def reason(question, pages, model):
+
+def reason(question, pages, model, extra_system: str | None = None):
     if pages:
         system = SYSTEM_PROMPT
-        content = [{"type": "text", "text": f"Research question: {question}\n\nRelevant pages:"}]
+        content = [
+            {"type": "text", "text": f"Research question: {question}\n\nRelevant pages:"}]
         for page in pages:
             header = f"\n[{page['source']} — Page {page['page_num']} (score: {page['score']:.3f})]"
             desc = page.get("description", "").strip()
@@ -356,6 +361,8 @@ def reason(question, pages, model):
         system = DIRECT_SYSTEM_PROMPT
         content = [{"type": "text", "text": question}]
         print(f"  direct query (no retrieval) to {model}...")
+    if extra_system:
+        system = system + extra_system
     text, usage = provider.reason(
         system_prompt=system,
         user_messages=[{"role": "user", "content": content}],
@@ -367,6 +374,7 @@ def reason(question, pages, model):
     return text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class QueryResult:
@@ -409,13 +417,14 @@ class CBorgBudget:
             return "?"
         try:
             from datetime import datetime, timezone
-            reset_dt = datetime.fromisoformat(self.reset_at.replace("Z", "+00:00"))
+            reset_dt = datetime.fromisoformat(
+                self.reset_at.replace("Z", "+00:00"))
             now = datetime.now(timezone.utc)
             delta = reset_dt - now
             if delta.total_seconds() > 0:
                 total_s = int(delta.total_seconds())
-                days    = total_s // 86400
-                hours   = (total_s % 86400) // 3600
+                days = total_s // 86400
+                hours = (total_s % 86400) // 3600
                 minutes = (total_s % 3600) // 60
                 return f"{days}d {hours}h {minutes}m"
             return "imminent"
@@ -430,10 +439,11 @@ def _should_retrieve(question: str) -> bool:
         text, _ = provider.reason(
             system_prompt=(
                 "You are a query router for a physics research assistant. "
-                "Reply with only YES or NO.\n"
-                "Should the following message trigger a document library search?\n"
-                "YES — physics/math questions, requests for derivations, questions about specific papers or concepts.\n"
-                "NO  — greetings, tests, meta-questions, conversational messages, or anything with no clear research intent."
+                "Reply with only YES or NO. When in doubt, reply NO.\n"
+                "Reply YES only if the message is unambiguously a physics or mathematics research question: "
+                "a derivation, a concept explanation, a question about a specific paper, theorem, or equation.\n"
+                "Reply NO for everything else: greetings, thanks, meta-questions, vague or conversational messages, "
+                "and any message that does not clearly require searching a research library."
             ),
             user_messages=[{"role": "user", "content": question}],
             model=ROUTING_MODEL,
@@ -446,10 +456,21 @@ def _should_retrieve(question: str) -> bool:
         return True
 
 
-def run_query(question, topics=None, model=DEFAULT_MODEL, top_k=DEFAULT_TOP_K) -> QueryResult:
+def run_query(
+    question,
+    topics=None,
+    model=DEFAULT_MODEL,
+    top_k=DEFAULT_TOP_K,
+    force_retrieval: bool = False,
+    disable_upgrades: bool = False,
+    extra_system: str | None = None,
+) -> QueryResult:
     """Pure logic: route, retrieve, reason, record spend. No printing, no file I/O.
 
     Raises ValueError (not SystemExit) so a GUI can catch and display it.
+    force_retrieval: skip the router and always retrieve.
+    disable_upgrades: skip lazy vision upgrades (use during eval to avoid index mutation).
+    extra_system: appended to the active system prompt (eval uses this for \\boxed{} instruction).
     """
     topics = topics or get_all_topics()
     if not topics:
@@ -460,13 +481,14 @@ def run_query(question, topics=None, model=DEFAULT_MODEL, top_k=DEFAULT_TOP_K) -
 
     monthly_budget = float(first_meta.get("monthly_budget", 50.0))
 
-    if _should_retrieve(question):
+    if force_retrieval or _should_retrieve(question):
         pages = retrieve_pages(topics, question, top_k)
-        upgrade_raw_math_pages(pages)
+        if not disable_upgrades:
+            upgrade_raw_math_pages(pages)
     else:
         pages = []
 
-    response_text, in_tok, out_tok = reason(question, pages, model)
+    response_text, in_tok, out_tok = reason(question, pages, model, extra_system=extra_system)
 
     query_cost = provider.estimate_cost(model, in_tok, out_tok)
     budget_data = record_spend(query_cost if query_cost is not None else 0.0)
@@ -497,19 +519,22 @@ def fetch_cborg_budget(fallback_budget: float, *, wait: bool = True) -> "CBorgBu
     if spent is None:
         return CBorgBudget(spent=None, budget="?", reset_at="?",
                            raw_keys=list(cborg.get("_raw", {}).keys()))
-    budget   = cborg.get("max_budget", fallback_budget)
+    budget = cborg.get("max_budget", fallback_budget)
     reset_at = cborg.get("budget_reset_at") or "?"
     return CBorgBudget(spent=spent, budget=budget, reset_at=reset_at)
 
 
 def print_cborg_budget(cborg: "CBorgBudget | None"):
     if cborg is None:
-        print(f"  CBorg actual:  (unavailable — check https://cborg.lbl.gov/api_spendcheck/)")
+        print(
+            f"  CBorg actual:  (unavailable — check https://cborg.lbl.gov/api_spendcheck/)")
     elif cborg.raw_keys:
-        print(f"  CBorg actual:  (field names unexpected — raw keys: {cborg.raw_keys})")
+        print(
+            f"  CBorg actual:  (field names unexpected — raw keys: {cborg.raw_keys})")
         print(f"                 check https://cborg.lbl.gov/api_spendcheck/")
     else:
-        print(f"  CBorg actual:  ${cborg.spent:.4f} spent / ${cborg.budget} budget  (resets in {cborg.reset_str})")
+        print(
+            f"  CBorg actual:  ${cborg.spent:.4f} spent / ${cborg.budget} budget  (resets in {cborg.reset_str})")
         rem = cborg.remaining
         if isinstance(rem, float):
             print(f"  CBorg left:    ${rem:.4f}")
@@ -523,14 +548,16 @@ def print_result_to_terminal(result: QueryResult):
     topics = result.topics
 
     print(f"\nQuery: {result.question}")
-    print(f"Topics: {', '.join(topics)}  |  Model: {result.model}  |  Top-K: {result.top_k}")
+    print(
+        f"Topics: {', '.join(topics)}  |  Model: {result.model}  |  Top-K: {result.top_k}")
     print("=" * 60)
 
     print(f"\n[1] Retrieved {len(result.pages)} page(s):")
     for p in result.pages:
-        tag  = f"[{p['topic']}] " if len(topics) > 1 else ""
+        tag = f"[{p['topic']}] " if len(topics) > 1 else ""
         flag = "" if p.get("clean", True) else "  (raw)"
-        print(f"    {tag}{p['source']} — p.{p['page_num']}  (score: {p['score']:.4f}){flag}")
+        print(
+            f"    {tag}{p['source']} — p.{p['page_num']}  (score: {p['score']:.4f}){flag}")
 
     print(f"\n{'=' * 60}")
     print(result.response_text)
@@ -539,7 +566,8 @@ def print_result_to_terminal(result: QueryResult):
     print(f"\n── Cost ──────────────────────────────────────────────────")
     print(f"  Tokens:        {result.in_tok:,} in / {result.out_tok:,} out")
     print(f"  This query:    {result.cost_str}")
-    print(f"  Local MTD:     ${result.budget_data['spent']:.4f}  ({result.budget_data['queries']} queries this session)")
+    print(
+        f"  Local MTD:     ${result.budget_data['spent']:.4f}  ({result.budget_data['queries']} queries this session)")
 
 
 def write_markdown(result: QueryResult):
@@ -547,12 +575,15 @@ def write_markdown(result: QueryResult):
     out_path = SCRIPT_DIR / "last_response.md"
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(f"# Query\n\n{result.question}\n\n")
-        f.write(f"**Topics:** {', '.join(result.topics)}  |  **Model:** {result.model}\n\n")
+        f.write(
+            f"**Topics:** {', '.join(result.topics)}  |  **Model:** {result.model}\n\n")
         f.write("**Retrieved pages:**\n")
         for p in result.pages:
             tag = f"[{p['topic']}] " if len(result.topics) > 1 else ""
-            f.write(f"- {tag}{p['source']} — p.{p['page_num']} (score: {p['score']:.4f})\n")
-        f.write(f"\n**Cost:** {result.cost_str}  |  **MTD:** ${result.budget_data['spent']:.4f}\n\n")
+            f.write(
+                f"- {tag}{p['source']} — p.{p['page_num']} (score: {p['score']:.4f})\n")
+        f.write(
+            f"\n**Cost:** {result.cost_str}  |  **MTD:** ${result.budget_data['spent']:.4f}\n\n")
         f.write(f"# Response\n\n{result.response_text}\n")
     print(f"Saved to: {out_path}")
 

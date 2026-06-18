@@ -7,7 +7,7 @@ import argparse
 import shutil
 from pathlib import Path
 
-SCRIPT_DIR  = Path(__file__).resolve().parent
+SCRIPT_DIR = Path(__file__).resolve().parent
 INDEXES_DIR = SCRIPT_DIR / "indexes"
 
 

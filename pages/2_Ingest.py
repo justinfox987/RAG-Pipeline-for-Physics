@@ -19,10 +19,12 @@ with col1:
 
 with col2:
     if choice == "(new topic…)":
-        topic_name = st.text_input("New topic name", placeholder="e.g. heisenberg")
+        topic_name = st.text_input(
+            "New topic name", placeholder="e.g. heisenberg")
     else:
         topic_name = choice
-        st.text_input("Topic", value=topic_name, disabled=True, label_visibility="visible")
+        st.text_input("Topic", value=topic_name, disabled=True,
+                      label_visibility="visible")
 
 # ── Upload ─────────────────────────────────────────────────────────────────────
 
@@ -55,7 +57,7 @@ if st.button("Ingest", type="primary"):
             dest.write_bytes(f.getbuffer())
             saved.append(dest)
 
-        index   = TopicIndex(topic_name)
+        index = TopicIndex(topic_name)
         results = []
 
         try:

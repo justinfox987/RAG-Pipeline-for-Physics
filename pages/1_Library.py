@@ -27,12 +27,12 @@ for topic in topics:
         st.warning(f"{topic}: could not read metadata — {e}")
         continue
 
-    all_pages  = meta.get("pages", [])
+    all_pages = meta.get("pages", [])
     file_index = meta.get("files", {})
-    n_files    = len(file_index)
-    n_pages    = len(all_pages)
-    n_vision   = sum(1 for p in all_pages if p.get("clean", False))
-    n_raw      = n_pages - n_vision
+    n_files = len(file_index)
+    n_pages = len(all_pages)
+    n_vision = sum(1 for p in all_pages if p.get("clean", False))
+    n_raw = n_pages - n_vision
 
     header = f"**{topic}** — {n_files} file{'s' if n_files != 1 else ''}, {n_pages} pages  ({n_vision} vision · {n_raw} raw)"
     with st.expander(header, expanded=False):

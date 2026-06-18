@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Protocol, Any
 
+
 class LLMProvider(Protocol):
     def embed_texts(
         self, texts: list[str], model: str

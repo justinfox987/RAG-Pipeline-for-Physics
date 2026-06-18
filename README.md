@@ -46,10 +46,10 @@ Add this to your shell profile (`.bashrc`, `.zshrc`, etc.) to persist it.
 
 **2. Organize your PDFs**
 
-Place PDFs into topic folders under `papers/`:
+Place PDFs into topic folders under `curr_resources/`:
 
 ```
-papers/
+curr_resources/
   heisenberg/
     Sandratskii2017.pdf
     HeisenbergModel.pdf
@@ -125,7 +125,7 @@ Output is printed to the terminal and saved to `last_response.md`.
 ├── pages/
 │   ├── 1_Library.py        # Library browser page
 │   └── 2_Ingest.py         # Document upload/ingest page
-├── papers/                 # Your source PDFs (gitignored)
+├── curr_resources/         # Your source PDFs (gitignored)
 └── indexes/                # Generated FAISS indexes (gitignored)
 ```
 
@@ -162,7 +162,7 @@ Key constants at the top of `query.py` and `ingest.py`:
 | `DEFAULT_MODEL` | `gemma-4` | LLM used for reasoning |
 | `ROUTING_MODEL` | `cborg-mini-fast` | Fast model for query classification |
 | `EMBEDDING_MODEL` | `cohere-embed-v4` | Embedding model for indexing and retrieval |
-| `EMBEDDING_DIM` | `1024` | Must match the embedding model's output dimension |
+| `EMBEDDING_DIM` | `1536` | Must match the embedding model's output dimension |
 | `DEFAULT_TOP_K` | `5` | Pages retrieved per query |
 | `VISION_TARGET` | `15%` | Target fraction of textbook pages sent to vision at ingest |
 
