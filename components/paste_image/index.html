@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: transparent; font-family: sans-serif; }
+
+  #btn {
+    align-items: center;
+    background: transparent;
+    border: 1.5px dashed #bbb;
+    border-radius: 6px;
+    color: #888;
+    cursor: pointer;
+    display: flex;
+    font-size: 13px;
+    gap: 6px;
+    padding: 5px 12px;
+    width: 100%;
+  }
+  #btn:hover { border-color: #777; color: #444; background: rgba(0,0,0,0.03); }
+  #btn:active { opacity: 0.7; }
+  #msg { color: #c00; font-size: 11px; margin-top: 4px; display: none; }
+</style>
+</head>
+<body>
+<button id="btn" onclick="pasteImage()">
+  <span>📋</span><span>Paste image from clipboard</span>
+</button>
+<div id="msg"></div>
+
+<script>
+  var ORIGIN = "*";
+
+  function postMsg(payload) {
+    window.parent.postMessage(payload, ORIGIN);
+  }
+
+  // Step 1: announce we are ready. Streamlit will reply with "streamlit:render".
+  postMsg({ type: "streamlit:componentReady", apiVersion: 1 });
+
+  // Step 2: once Streamlit has acknowledged us, set our height.
+  window.addEventListener("message", function(e) {
+    if (e.data && e.data.type === "streamlit:render") {
+      postMsg({ type: "streamlit:setFrameHeight", height: document.body.scrollHeight || 36 });
+    }
+  });
+
+  function showError(text) {
+    var el = document.getElementById("msg");
+    el.textContent = text;
+    el.style.display = "block";
+    postMsg({ type: "streamlit:setFrameHeight", height: document.body.scrollHeight });
+    setTimeout(function() {
+      el.style.display = "none";
+      postMsg({ type: "streamlit:setFrameHeight", height: document.body.scrollHeight });
+    }, 4000);
+  }
+
+  async function pasteImage() {
+    if (!navigator.clipboard || !navigator.clipboard.read) {
+      showError("Clipboard API unavailable — use the file picker (paperclip) instead.");
+      return;
+    }
+    try {
+      var clipItems = await navigator.clipboard.read();
+      var found = false;
+      for (var item of clipItems) {
+        for (var type of item.types) {
+          if (type.startsWith("image/")) {
+            var blob = await item.getType(type);
+            var reader = new FileReader();
+            reader.onload = function(e) {
+              postMsg({ type: "streamlit:setComponentValue", value: e.target.result, dataType: "json" });
+            };
+            reader.readAsDataURL(blob);
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+      if (!found) showError("No image in clipboard.");
+    } catch (err) {
+      if (err.name === "NotAllowedError") {
+        showError("Clipboard access denied — allow it in the browser permission prompt.");
+      } else {
+        showError("Error: " + err.message);
+      }
+    }
+  }
+</script>
+</body>
+</html>

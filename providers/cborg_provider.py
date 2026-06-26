@@ -98,13 +98,42 @@ class CBorgProvider:
         if extra_kwargs:
             kwargs.update(extra_kwargs)
 
-        response = self.client.chat.completions.create(**kwargs)
-        message = response.choices[0].message
-        text = (message.content or "").strip()
+        # Stream the response so we always get content even if max_tokens is hit.
+        # Without streaming, CBorg/Gemini returns content=None on truncation.
+        kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
+
+        chunks = []
+        finish_reason = None
+        usage_obj = None
+        stream = self.client.chat.completions.create(**kwargs)
+        for chunk in stream:
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    chunks.append(delta.content)
+                fr = chunk.choices[0].finish_reason
+                if fr:
+                    finish_reason = fr
+            if getattr(chunk, "usage", None):
+                usage_obj = chunk.usage
+
+        text = "".join(chunks).strip()
+
+        # Fall back to reasoning_content for o-series / thinking models
+        if not text and finish_reason != "length":
+            text = ""  # nothing recoverable
+
         if not text:
-            text = (getattr(message, "reasoning_content", None)
-                    or f"[Empty response — raw: {message}]")
-        return text, self._usage_dict(response)
+            raise ValueError(
+                f"Empty response from model (finish_reason={finish_reason!r}). "
+                f"The model produced no output — try again or switch models."
+            )
+
+        if finish_reason == "length":
+            text += "\n\n*(Note: response was cut off at the output token limit.)*"
+
+        return text, self._usage_dict_from_obj(usage_obj)
 
     # ── Budget ─────────────────────────────────────────────────────────
 
@@ -140,7 +169,10 @@ class CBorgProvider:
 
     @staticmethod
     def _usage_dict(response) -> dict[str, int]:
-        u = getattr(response, "usage", None)
+        return CBorgProvider._usage_dict_from_obj(getattr(response, "usage", None))
+
+    @staticmethod
+    def _usage_dict_from_obj(u) -> dict[str, int]:
         if u is None:
             return {"prompt_tokens": 0, "completion_tokens": 0}
         return {

@@ -3,7 +3,7 @@ PDF ingestion for the research pipeline.
 
 For each PDF in papers/<topic>/:
   1. Render each page to an image (pymupdf)
-  2. Send page image to gemini-3.1-flash-lite (vision) for LaTeX-rich description
+  2. Send page image to cborg-ocr-fast (vision) for LaTeX-rich description
   3. Embed description with cohere-embed-v4 (1536-dim)
   4. Store in per-topic FAISS index with metadata
 
@@ -430,7 +430,7 @@ def describe_page(data_uri, page_num, filename):
         try:
             text, usage = provider.transcribe_image(
                 data_uri, PAGE_DESCRIPTION_PROMPT, VISION_MODEL,
-                temperature=0.1, max_tokens=4000, timeout=60,
+                temperature=0.1, max_tokens=4000, timeout=120,
             )
             if not text:
                 print(f"\n    [debug] empty response on page {page_num}: "
@@ -699,14 +699,14 @@ def ingest_textbook(pdf_path: Path, doc: fitz.Document, index: TopicIndex,
         print(f"    ({len(problem_pages)} pages in problem/solution sections; "
               f"{n_demoted} math pages demoted to text by penalty)")
 
-    # ── Warn if >50% of pages need vision (likely a scanned PDF) ─────────────
-    if actual_pct > 0.50:
+    # ── Warn if vision significantly exceeds the routing target (likely a scanned PDF) ──
+    scan_threshold = min(VISION_TARGET + 0.15, 0.98)
+    if actual_pct > scan_threshold:
         print(
-            f"\n  ⚠  WARNING: {actual_pct:.0%} of pages in '{pdf_path.name}' need vision.")
+            f"\n  ⚠  WARNING: {actual_pct:.0%} of pages in '{pdf_path.name}' need vision"
+            f" (target: {VISION_TARGET:.0%}).")
         print(f"     This is likely a scanned/image-only PDF.")
-        print(
-            f"     Vision-processing {n_vision} pages will be slow and will cost ~"
-            f"${n_vision * 0.0012:.2f} (estimate).")
+        print(f"     Vision-processing {n_vision} pages will be slow.")
         if sys.stdin.isatty():
             answer = input(
                 "     Ingest this book anyway? [y/N]: ").strip().lower()

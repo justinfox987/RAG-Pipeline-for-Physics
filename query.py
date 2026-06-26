@@ -7,7 +7,6 @@ Usage:
     python query.py "<question>" --top-k 8
     python query.py "<question>" --topic heisenberg dmi
 """
-import sys
 import json
 import base64
 import argparse
@@ -22,9 +21,10 @@ from providers import get_provider
 
 from config import (
     SCRIPT_DIR, PAPERS_DIR, INDEXES_DIR, BUDGET_FILE,
-    DEFAULT_MODEL, DEFAULT_TOP_K, ROUTING_MODEL,
+    DEFAULT_MODEL, DEFAULT_TOP_K, ROUTING_MODEL, VISION_MODEL,
     EMBEDDING_MODEL, EMBEDDING_DIM,
     UPGRADE_MATH_THRESHOLD, UPGRADE_MIN_SCORE, MAX_UPGRADES_PER_QUERY,
+    RETRIEVAL_MIN_SCORE,
 )
 
 
@@ -233,8 +233,10 @@ def get_all_topics() -> list[str]:
 
 
 def retrieve_pages(topics: list[str], query: str, top_k: int,
-                   query_vec: np.ndarray | None = None) -> list[dict]:
+                   query_vec: np.ndarray | None = None,
+                   min_score: float | None = None) -> tuple[list[dict], float | None]:
     all_pages: list[dict] = []
+    _filtered_pages: list[dict] = []  # candidates that didn't pass the threshold
 
     # Load metadata for each selected topic (so we can derive embedding model/dim)
     metadata_by_topic: dict[str, dict] = {}
@@ -256,7 +258,7 @@ def retrieve_pages(topics: list[str], query: str, top_k: int,
             embedding_dims.add(int(metadata["embedding_dim"]))
 
     if not metadata_by_topic:
-        return []
+        return [], None
 
     if len(embedding_models) > 1:
         raise SystemExit(
@@ -318,6 +320,8 @@ def retrieve_pages(topics: list[str], query: str, top_k: int,
         k = min(top_k * 2, index.ntotal)
         scores, indices = index.search(query_vec, k)
 
+        topic_min_score = float(metadata.get("retrieval_min_score", min_score or 0.0))
+
         for score, idx in zip(scores[0], indices[0]):
             if idx == -1:
                 continue
@@ -325,10 +329,17 @@ def retrieve_pages(topics: list[str], query: str, top_k: int,
             page["score"] = float(score)
             page["topic"] = topic
             page["_idx"] = int(idx)
-            all_pages.append(page)
+            if score >= topic_min_score:
+                all_pages.append(page)
+            else:
+                _filtered_pages.append(page)
 
     all_pages.sort(key=lambda p: p["score"], reverse=True)
-    return all_pages[:top_k]
+    _filtered_pages.sort(key=lambda p: p["score"], reverse=True)
+    best_score = all_pages[0]["score"] if all_pages else (
+        _filtered_pages[0]["score"] if _filtered_pages else None
+    )
+    return all_pages[:top_k], best_score
 
 # ── Reasoning ─────────────────────────────────────────────────────────────────
 
@@ -344,12 +355,13 @@ Guidelines:
 - If the pages lack sufficient information, say so explicitly
 - Be rigorous — this is research-level physics"""
 
-DIRECT_SYSTEM_PROMPT = """You are a helpful physics research assistant. Respond conversationally and concisely."""
+def reason(question, pages, model, images: list[str] | None = None,
+           extra_system: str | None = None):
+    system = SYSTEM_PROMPT
+    if extra_system:
+        system = system + extra_system
 
-
-def reason(question, pages, model, extra_system: str | None = None):
     if pages:
-        system = SYSTEM_PROMPT
         content = [
             {"type": "text", "text": f"Research question: {question}\n\nRelevant pages:"}]
         for page in pages:
@@ -358,17 +370,23 @@ def reason(question, pages, model, extra_system: str | None = None):
             content.append({"type": "text", "text": f"{header}\n{desc}"})
         print(f"  sending {len(pages)} pages to {model}...")
     else:
-        system = DIRECT_SYSTEM_PROMPT
-        content = [{"type": "text", "text": question}]
-        print(f"  direct query (no retrieval) to {model}...")
-    if extra_system:
-        system = system + extra_system
+        content = [{"type": "text", "text": (
+            f"Research question: {question}\n\n"
+            "(No relevant pages were found in the library for this query. "
+            "Answer from your own expertise.)"
+        )}]
+        print(f"  no retrieval results — answering from model knowledge ({model})...")
+
+    if images:
+        img_blocks = [{"type": "image_url", "image_url": {"url": uri}} for uri in images]
+        content = img_blocks + content
+
     text, usage = provider.reason(
         system_prompt=system,
         user_messages=[{"role": "user", "content": content}],
         model=model,
         temperature=0.2,
-        max_tokens=16384,
+        max_tokens=32768,
         timeout=None,
     )
     return text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
@@ -389,6 +407,7 @@ class QueryResult:
     query_cost: float | None        # None = no pricing configured for this model
     budget_data: dict
     monthly_budget: float           # fallback max budget for the CBorg section
+    retrieval_best_score: float | None = None  # best candidate score regardless of threshold
 
     @property
     def cost_str(self) -> str:
@@ -439,11 +458,11 @@ def _should_retrieve(question: str) -> bool:
         text, _ = provider.reason(
             system_prompt=(
                 "You are a query router for a physics research assistant. "
-                "Reply with only YES or NO. When in doubt, reply NO.\n"
-                "Reply YES only if the message is unambiguously a physics or mathematics research question: "
-                "a derivation, a concept explanation, a question about a specific paper, theorem, or equation.\n"
-                "Reply NO for everything else: greetings, thanks, meta-questions, vague or conversational messages, "
-                "and any message that does not clearly require searching a research library."
+                "Reply with only YES or NO. When in doubt, reply YES.\n"
+                "Reply YES for any question about physics, mathematics, or science — "
+                "including explanations, derivations, concepts, equations, problem solving, and paper questions.\n"
+                "Reply NO only for unambiguous non-research messages: pure greetings (hi, hello), "
+                "thanks, or messages with zero physics content."
             ),
             user_messages=[{"role": "user", "content": question}],
             model=ROUTING_MODEL,
@@ -464,6 +483,7 @@ def run_query(
     force_retrieval: bool = False,
     disable_upgrades: bool = False,
     extra_system: str | None = None,
+    images: list[str] | None = None,
 ) -> QueryResult:
     """Pure logic: route, retrieve, reason, record spend. No printing, no file I/O.
 
@@ -471,6 +491,7 @@ def run_query(
     force_retrieval: skip the router and always retrieve.
     disable_upgrades: skip lazy vision upgrades (use during eval to avoid index mutation).
     extra_system: appended to the active system prompt (eval uses this for \\boxed{} instruction).
+    images: list of base64 data URIs included in the user message (e.g. "data:image/png;base64,...").
     """
     topics = topics or get_all_topics()
     if not topics:
@@ -481,14 +502,36 @@ def run_query(
 
     monthly_budget = float(first_meta.get("monthly_budget", 50.0))
 
-    if force_retrieval or _should_retrieve(question):
-        pages = retrieve_pages(topics, question, top_k)
+    # When an image is attached but the typed question is thin (<20 chars), extract
+    # the problem text from the image so retrieval has something meaningful to embed.
+    retrieval_query = question
+    if images and len(question.strip()) < 20:
+        try:
+            extracted, _ = provider.transcribe_image(
+                images[0],
+                "Extract the physics problem or question shown in this image. "
+                "Output only the problem text, no commentary.",
+                VISION_MODEL,
+                temperature=0.1,
+                max_tokens=512,
+                timeout=30,
+            )
+            if extracted and extracted.strip():
+                retrieval_query = extracted.strip()
+                print(f"  image query extracted: {retrieval_query[:120]}...")
+        except Exception:
+            pass  # fall back to the typed question
+
+    best_score = None
+    if force_retrieval or _should_retrieve(retrieval_query):
+        pages, best_score = retrieve_pages(topics, retrieval_query, top_k, min_score=RETRIEVAL_MIN_SCORE)
         if not disable_upgrades:
             upgrade_raw_math_pages(pages)
     else:
         pages = []
 
-    response_text, in_tok, out_tok = reason(question, pages, model, extra_system=extra_system)
+    response_text, in_tok, out_tok = reason(
+        question, pages, model, images=images, extra_system=extra_system)
 
     query_cost = provider.estimate_cost(model, in_tok, out_tok)
     budget_data = record_spend(query_cost if query_cost is not None else 0.0)
@@ -505,6 +548,7 @@ def run_query(
         query_cost=query_cost,
         budget_data=budget_data,
         monthly_budget=monthly_budget,
+        retrieval_best_score=best_score,
     )
 
 
