@@ -1,0 +1,14 @@
+__pycache__/
+.claude
+.vscode
+curr_resources/
+indexes/*
+sessions/
+evaluation/
+budget.json
+build_base.py
+cborg_models.html
+find_max_workers.py
+evaluate_critpt.py
+pyrightconfig.json
+test.py

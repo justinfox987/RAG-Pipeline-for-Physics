@@ -1,0 +1,68 @@
+"""
+Central configuration for the RAG pipeline.
+
+All model names, directory paths, and tuning parameters live here.
+ingest.py, query.py, and utility scripts import from this module.
+"""
+import os
+from pathlib import Path
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+SCRIPT_DIR = Path(__file__).resolve().parent
+PAPERS_DIR = SCRIPT_DIR / "curr_resources"
+INDEXES_DIR = SCRIPT_DIR / "indexes"
+BUDGET_FILE = SCRIPT_DIR / "budget.json"
+
+# ── API keys ────────────────────────────────────────────────────────────────────
+CBORG_API_KEY = os.environ.get("CBORG_API_KEY")
+if not CBORG_API_KEY:
+    raise SystemExit("CBORG_API_KEY env var is not set.")
+
+# ── Models ─────────────────────────────────────────────────────────────────────
+DEFAULT_MODEL = "gemini-3.5-flash"                # LLM for reasoning
+ROUTING_MODEL = "cborg-mini"        # fast classifier for query routing
+VISION_MODEL = "cborg-ocr-fast"              # vision model for math-page transcription
+EMBEDDING_MODEL = "cohere-embed-v4"      # embedding model
+EMBEDDING_DIM = 1536                     # cohere-embed-v4 output dimension
+
+# ── Query settings ─────────────────────────────────────────────────────────────
+DEFAULT_TOP_K = 5
+MONTHLY_BUDGET = 50.00
+RETRIEVAL_MIN_SCORE = 0.20           # coarse garbage filter; relevance_filter does the real work
+RETRIEVAL_FETCH_MULTIPLIER = 5       # FAISS candidates fetched per topic = top_k * this
+RETRIEVAL_CONFIDENCE_THRESHOLD = 0.45  # bail out entirely if best candidate is below this
+UPGRADE_MATH_THRESHOLD = 5     # min math_score to bother upgrading a raw page
+UPGRADE_MIN_SCORE = 0.50  # min retrieval score to qualify for lazy upgrade
+MAX_UPGRADES_PER_QUERY = 2     # cap concurrent vision calls per query
+
+# ── Ingestion ──────────────────────────────────────────────────────────────────
+PAGE_DPI = 160    # lower = smaller images = faster transfer
+MAX_EMBED_CHARS = 4000   # trim descriptions before embedding (cohere-embed-v4 effective limit)
+EMBED_BATCH = 16     # texts per embedding API call
+EMBED_WORKERS = 2      # concurrent embedding batch workers
+EMBED_STAGGER = 2.0    # seconds between batch submissions to avoid token burst
+MAX_RETRIES = 4      # embedding retry attempts on failure
+RETRY_BACKOFF = 10     # seconds between retries
+MAX_WORKERS = 24     # concurrent vision workers
+WORKER_STAGGER = 1.0    # seconds between worker starts to avoid burst 429s
+
+# ── Textbook routing ──────────────────────────────────────────────────────────
+TEXTBOOK_PAGE_THRESHOLD = 25    # docs longer than this use the textbook path
+VISION_TARGET = 0.90  # target fraction of textbook pages sent to vision
+BASE_VISION_TARGET = 0.80  # higher target for building shared base indexes
+
+MATH_DENSITY_THRESHOLD = 0.08  # math indicators / total chars
+MATH_DENSITY_MIN_COUNT = 20    # minimum absolute indicator count for density path
+MIN_PAGE_CHARS = 100   # pages below this char count are skipped
+PROBLEM_SECTION_PENALTY = 0   # score penalty for problem/solution section pages
+
+# ── Cost estimation ────────────────────────────────────────────────────────────
+EMBED_PRICE_PER_M_TOKENS = 0.12     # cohere-embed-v4 via Bedrock ($/1M tokens)
+AVG_EMBED_TOKENS_VISION  = 500      # estimated embed tokens per vision-transcribed page
+AVG_EMBED_TOKENS_TEXT    = 300      # estimated embed tokens per raw-text page
+AVG_VISION_TOKENS_INPUT  = 1200     # vision input tokens/page (fallback when not sampled)
+AVG_VISION_TOKENS_OUTPUT = 600      # vision output tokens/page (fallback when not sampled)
+AVG_VISION_SECONDS_PER_PAGE = 8.0  # vision processing time in seconds (fallback)
+VISION_PRICING = {                  # (input $/1M, output $/1M) keyed by model name
+    "gemini-3.1-flash-lite": (0.25, 1.50),
+}
